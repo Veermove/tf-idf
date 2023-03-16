@@ -5,17 +5,24 @@ use std::{
     collections::HashMap
 };
 
-use crate::Lexer;
+use crate::{Lexer, trie::Triee};
 
-pub fn index(path: &Path, join_files: bool) -> Result<Index, std::io::Error> {
-    return index_folder_content(path, join_files)
-        .map(|r| r
-            .into_iter()
-            .collect::<HashMap<PathBuf, Document>>()
+pub fn index(path: &Path, join_files: bool, file_extension: &str)
+    -> Result<(Index, Triee), std::io::Error> {
+
+    let mut triee = Triee::new();
+    return index_folder_content(&mut triee, path, join_files, file_extension)
+        .map(|r|
+            (
+                r.into_iter()
+                .collect::<HashMap<PathBuf, Document>>(),
+                triee
+            )
         )
 }
 
-pub fn index_folder_content(path: &Path, join_files: bool) -> std::io::Result<Vec<(PathBuf, HashMap<String, usize>)>> {
+fn index_folder_content(triee: &mut Triee, path: &Path, join_files: bool, file_extension: &str)
+    -> std::io::Result<Vec<(PathBuf, HashMap<String, usize>)>> {
 
     let entries = path.read_dir()
         .expect("Failed to open provided path")
@@ -44,8 +51,8 @@ pub fn index_folder_content(path: &Path, join_files: bool) -> std::io::Result<Ve
             )
         ).collect::<Vec<_>>();
 
-    let files_ind =  index_files(files, path.to_path_buf(), join_files)?;
-    let dirs_ind = index_folders(dirs, join_files)?;
+    let files_ind =  index_files(triee, files, path.to_path_buf(), join_files, file_extension)?;
+    let dirs_ind = index_folders(triee, dirs, join_files, file_extension)?;
 
     return Ok(files_ind.into_iter().chain(dirs_ind.into_iter()).collect());
 }
@@ -53,10 +60,10 @@ pub fn index_folder_content(path: &Path, join_files: bool) -> std::io::Result<Ve
 pub type Index = HashMap<PathBuf, HashMap<String, usize>>;
 pub type Document = HashMap<String, usize>;
 
-fn index_folders(folder_entries: Vec<&DirEntry>, join_files: bool) -> std::io::Result<Vec<(PathBuf, HashMap<String, usize>)>> {
+fn index_folders(triee: &mut Triee, folder_entries: Vec<&DirEntry>, join_files: bool, file_extension: &str) -> std::io::Result<Vec<(PathBuf, HashMap<String, usize>)>> {
     return Ok(
         folder_entries.iter()
-            .map(|f| index_folder_content(&f.path(), join_files))
+            .map(|f| index_folder_content(triee, &f.path(), join_files, file_extension))
             .filter(|r| r.is_ok())
             .flat_map(|r| r.unwrap().into_iter())
             .collect()
@@ -64,12 +71,12 @@ fn index_folders(folder_entries: Vec<&DirEntry>, join_files: bool) -> std::io::R
 
 }
 
-fn index_files(file_entreis: Vec<&DirEntry>, path: PathBuf, join_files: bool) -> std::io::Result<Vec<(PathBuf, HashMap<String, usize>)>> {
+fn index_files(triee: &mut Triee, file_entreis: Vec<&DirEntry>, path: PathBuf, join_files: bool, file_extension: &str) -> std::io::Result<Vec<(PathBuf, HashMap<String, usize>)>> {
     if join_files {
         let mut collector = HashMap::new();
 
         for entry in file_entreis {
-            index_single_file(entry, &mut collector)?;
+            index_single_file(triee, entry, &mut collector, file_extension)?;
 
         }
         return Ok(vec![(path, collector)]);
@@ -78,19 +85,20 @@ fn index_files(file_entreis: Vec<&DirEntry>, path: PathBuf, join_files: bool) ->
     let mut res = Vec::new();
     for entry in file_entreis {
         let mut collector = HashMap::new();
-        index_single_file(entry, &mut collector)?;
+        index_single_file(triee, entry, &mut collector, file_extension)?;
         res.push((entry.path(), collector))
     }
 
     Ok(res)
 }
 
-fn index_single_file(entry: &DirEntry, collector: &mut Document) -> std::io::Result<()> {
-    // if !(entry.path().extension().map(|e| e == "json").unwrap_or(false)) {
-    //     return Ok(());
-    // }
+fn index_single_file(triee: &mut Triee, entry: &DirEntry, collector: &mut Document, file_extension: &str) -> std::io::Result<()> {
+    if entry.path().extension().map(|e| e != file_extension).unwrap_or(true) {
+        return Ok(());
+    }
 
     println!("Indexing {}", entry.path().display());
+
     let mut buffer = String::new();
     {
         let mut reader = BufReader::new(
@@ -104,7 +112,12 @@ fn index_single_file(entry: &DirEntry, collector: &mut Document) -> std::io::Res
 
 
     for token in lex {
-        let value = String::from_iter(token).to_uppercase();
+        // dbg!(token);
+        let value = String::from_iter(token);//.to_uppercase();
+        let up_token = value.chars().collect::<Vec<_>>();
+
+        triee.insert_word(&up_token, entry.path());
+
         collector.insert(
             value.clone(),
             if collector.contains_key(&value)
@@ -116,61 +129,3 @@ fn index_single_file(entry: &DirEntry, collector: &mut Document) -> std::io::Res
 
     Ok(())
 }
-
-// fn create_index_on_file(value: JsonValue, path: String) -> std::io::Result<FileIndex> {
-//     fn index_inner(collector: &mut HashMap<String, usize>, val: JsonValue) {
-//         match val {
-//             JsonValue::StringValue(s_val) => {
-//                 for sub_s_val in s_val.split_whitespace().map(str::to_lowercase) {
-//                     collector.insert(
-//                         sub_s_val.clone(), if collector.contains_key(&sub_s_val)
-//                             { *collector.get(&sub_s_val).unwrap() + 1 }
-//                         else
-//                             { 1 }
-//                     );
-//                 }
-//             }
-//             JsonValue::ArrayValue(ar_val) => {
-//                 for val in ar_val {
-//                     index_inner(collector, val);
-//                 }
-//             }
-//             JsonValue::ObjectValue(o_val) => {
-//                 for (_, val) in o_val {
-//                     index_inner(collector, val);
-//                 }
-//             },
-//             JsonValue::IntegerValue(i_val) => {
-//                 let s_val = i_val.to_string();
-//                 collector.insert(
-//                     s_val.clone(), if collector.contains_key(&s_val) { *collector.get(&s_val).unwrap() + 1 } else { 1 }
-//                 );
-//             },
-//             JsonValue::DecimalValue(d_val) => {
-//                 let s_val = d_val.to_string();
-//                 collector.insert(
-//                     s_val.clone(), if collector.contains_key(&s_val) { *collector.get(&s_val).unwrap() + 1 } else { 1 }
-//                 );
-//             },
-//             JsonValue::BooleanValue(_) =>  { },
-//             JsonValue::Null => { },
-
-//         }
-//     }
-//     let mut index = HashMap::new();
-//     index_inner(&mut index, value);
-//     return Ok(FileIndex { rankings: index, path });
-// }
-
-
-// #[derive(Debug)]
-// pub struct FileIndex {
-//     pub rankings: Index,
-//     pub path: String
-// }
-
-// impl Display for FileIndex {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         write!(f, "{}\n  {:#?}", self.path, self.rankings)
-//     }
-// }

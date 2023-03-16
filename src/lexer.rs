@@ -24,10 +24,49 @@ impl <'a> Lexer<'a> {
         return self.chop(n)
     }
 
+
+
     fn chop(&mut self, n: usize) -> &'a [char] {
-        let token = &self.content[0..n];
+        let mut token = &self.content[0..n];
         self.content = &self.content[n..];
+
+        let mut resulting = Vec::new();
+        loop {
+            if let Some((c, co)) = Self::sanitize_token(&token[0..]) {
+                resulting.push(c);
+                token = co;
+            } else {
+                break;
+            }
+        }
         return token;
+    }
+
+    fn sanitize_token(mut content: &[char]) -> Option<(char, &[char])> {
+        if content.is_empty() {
+            return None;
+        }
+
+        if content.len() <= 5 || (content[0], content[1]) != ('\\', 'u') {
+            return Some((content[0], &content[1..]));
+        }
+
+        // dbg!(content);
+        let mut bytes = Vec::new();
+        while content.len() > 5 && (content[0], content[1]) == ('\\', 'u') {
+            let byte = content[2..6].iter().collect::<String>();
+            let byte_num = u8::from_str_radix(&byte, 16).ok()?;
+            content = &content[6..];
+            bytes.push(byte_num);
+        }
+
+        let resulting_char = std::str::from_utf8(&bytes)
+            .ok()?
+            .chars()
+            .take(1)
+            .next()?;
+
+        return Some((resulting_char, content));
     }
 
     pub fn next_token(&mut self) -> Option<&'a [char]> {
@@ -38,7 +77,7 @@ impl <'a> Lexer<'a> {
         }
 
         if self.content[0].is_alphabetic() {
-            return Some(self.chop_while(|c| c.is_alphanumeric()))
+            return Some(self.chop_while(|c| c.is_alphanumeric() || *c == '\\'))
         }
 
         if self.content[0].is_ascii_digit() {

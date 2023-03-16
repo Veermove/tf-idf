@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{iter::Peekable, str::Chars, collections::HashMap, error::Error};
 
 #[derive(Debug, PartialEq, Clone)]
